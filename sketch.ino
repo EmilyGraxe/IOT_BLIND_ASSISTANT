@@ -1,63 +1,118 @@
+/*
+========================================================
+SMARTASSIST
+IoT Hybrid Navigation System
+for Visually Impaired Persons
+
+Features:
+- Front obstacle detection
+- Ground obstacle detection
+- Left/Right wearable vibration alerts
+- Buzzer warning
+- ESP32 WiFi IoT
+- Blynk notifications
+
+Board: ESP32
+========================================================
+*/
+
 #define BLYNK_TEMPLATE_ID "TMPLxxxx"
-#define BLYNK_TEMPLATE_NAME "Blind Assistant"
+#define BLYNK_TEMPLATE_NAME "SmartAssist"
 #define BLYNK_AUTH_TOKEN "YourAuthToken"
 
 #include <WiFi.h>
 #include <BlynkSimpleEsp32.h>
 
+// WIFI
 char ssid[] = "YourWiFiName";
 char pass[] = "YourWiFiPassword";
 
-// LEFT SENSOR
-#define trigLeft 5
-#define echoLeft 18
+// ==========================
+// FRONT SENSOR (CANE)
+// ==========================
+#define trigFront 5
+#define echoFront 18
 
-// CENTER SENSOR
-#define trigCenter 17
-#define echoCenter 16
+// ==========================
+// GROUND SENSOR (DOWNWARD)
+// ==========================
+#define trigGround 17
+#define echoGround 16
 
-// RIGHT SENSOR
-#define trigRight 4
-#define echoRight 2
+// ==========================
+// LEFT WRIST SENSOR
+// ==========================
+#define trigLeft 4
+#define echoLeft 2
 
+// ==========================
+// RIGHT WRIST SENSOR
+// ==========================
+#define trigRight 15
+#define echoRight 13
+
+// ==========================
 // VIBRATION MOTORS
+// ==========================
 #define motorLeft 25
-#define motorCenter 26
-#define motorRight 27
+#define motorRight 26
 
+// ==========================
 // BUZZER
-#define buzzer 14
+// ==========================
+#define buzzer 27
 
+// ==========================
+// VARIABLES
+// ==========================
 long duration;
 
-int distanceLeft;
-int distanceCenter;
-int distanceRight;
+int frontDistance;
+int groundDistance;
+int leftDistance;
+int rightDistance;
 
+// ==========================
+// SETUP
+// ==========================
 void setup() {
 
   Serial.begin(115200);
 
+  // Blynk
   Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
 
+  // FRONT SENSOR
+  pinMode(trigFront, OUTPUT);
+  pinMode(echoFront, INPUT);
+
+  // GROUND SENSOR
+  pinMode(trigGround, OUTPUT);
+  pinMode(echoGround, INPUT);
+
+  // LEFT SENSOR
   pinMode(trigLeft, OUTPUT);
   pinMode(echoLeft, INPUT);
 
-  pinMode(trigCenter, OUTPUT);
-  pinMode(echoCenter, INPUT);
-
+  // RIGHT SENSOR
   pinMode(trigRight, OUTPUT);
   pinMode(echoRight, INPUT);
 
+  // MOTORS
   pinMode(motorLeft, OUTPUT);
-  pinMode(motorCenter, OUTPUT);
   pinMode(motorRight, OUTPUT);
 
+  // BUZZER
   pinMode(buzzer, OUTPUT);
 
-  Serial.println("Smart Blind Navigation Assistant Started");
+  Serial.println("================================");
+  Serial.println("SMARTASSIST SYSTEM STARTED");
+  Serial.println("================================");
 }
 
+// ==========================
+// DISTANCE FUNCTION
+// ==========================
 int getDistance(int trigPin, int echoPin) {
 
   digitalWrite(trigPin, LOW);
@@ -75,60 +130,98 @@ int getDistance(int trigPin, int echoPin) {
   return distance;
 }
 
+// ==========================
+// MAIN LOOP
+// ==========================
 void loop() {
 
   Blynk.run();
 
-  distanceLeft = getDistance(trigLeft, echoLeft);
-  distanceCenter = getDistance(trigCenter, echoCenter);
-  distanceRight = getDistance(trigRight, echoRight);
+  // READ DISTANCES
+  frontDistance = getDistance(trigFront, echoFront);
 
-  Serial.print("Left: ");
-  Serial.print(distanceLeft);
+  groundDistance = getDistance(trigGround, echoGround);
+
+  leftDistance = getDistance(trigLeft, echoLeft);
+
+  rightDistance = getDistance(trigRight, echoRight);
+
+  // ==========================
+  // SERIAL MONITOR
+  // ==========================
+  Serial.print("Front: ");
+  Serial.print(frontDistance);
   Serial.println(" cm");
 
-  Serial.print("Center: ");
-  Serial.print(distanceCenter);
+  Serial.print("Ground: ");
+  Serial.print(groundDistance);
+  Serial.println(" cm");
+
+  Serial.print("Left: ");
+  Serial.print(leftDistance);
   Serial.println(" cm");
 
   Serial.print("Right: ");
-  Serial.print(distanceRight);
+  Serial.print(rightDistance);
   Serial.println(" cm");
 
+  Serial.println("---------------------------");
+
+  // ==========================
+  // FRONT OBSTACLE
+  // ==========================
+  if(frontDistance < 80) {
+
+    digitalWrite(buzzer, HIGH);
+
+    Blynk.virtualWrite(V0, "Front Obstacle Detected");
+
+    Serial.println("WARNING: FRONT OBSTACLE");
+
+  } else {
+
+    digitalWrite(buzzer, LOW);
+  }
+
+  // ==========================
+  // GROUND / STAIRS DETECTION
+  // ==========================
+  if(groundDistance > 100) {
+
+    digitalWrite(buzzer, HIGH);
+
+    Blynk.virtualWrite(V1, "Ground Gap / Stairs Detected");
+
+    Serial.println("WARNING: STAIRS OR HOLE");
+
+  }
+
+  // ==========================
   // LEFT OBSTACLE
-  if (distanceLeft < 50) {
+  // ==========================
+  if(leftDistance < 60) {
 
     digitalWrite(motorLeft, HIGH);
 
-    Blynk.virtualWrite(V0, "Obstacle Left");
+    Blynk.virtualWrite(V2, "Obstacle On Left");
+
+    Serial.println("LEFT OBSTACLE");
 
   } else {
 
     digitalWrite(motorLeft, LOW);
   }
 
-  // CENTER OBSTACLE
-  if (distanceCenter < 50) {
-
-    digitalWrite(motorCenter, HIGH);
-
-    digitalWrite(buzzer, HIGH);
-
-    Blynk.virtualWrite(V1, "Obstacle Ahead");
-
-  } else {
-
-    digitalWrite(motorCenter, LOW);
-
-    digitalWrite(buzzer, LOW);
-  }
-
+  // ==========================
   // RIGHT OBSTACLE
-  if (distanceRight < 50) {
+  // ==========================
+  if(rightDistance < 60) {
 
     digitalWrite(motorRight, HIGH);
 
-    Blynk.virtualWrite(V2, "Obstacle Right");
+    Blynk.virtualWrite(V3, "Obstacle On Right");
+
+    Serial.println("RIGHT OBSTACLE");
 
   } else {
 
