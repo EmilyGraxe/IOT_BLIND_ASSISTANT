@@ -1,232 +1,153 @@
-/*
-========================================================
-SMARTASSIST
-IoT Hybrid Navigation System
-for Visually Impaired Persons
 
-Features:
-- Front obstacle detection
-- Ground obstacle detection
-- Left/Right wearable vibration alerts
-- Buzzer warning
-- ESP32 WiFi IoT
-- Blynk notifications
+//   SMART BLIND STICK 
+//   Only Blynk + Sensors
 
-Board: ESP32
-========================================================
-*/
-
-#define BLYNK_TEMPLATE_ID "TMPLxxxx"
-#define BLYNK_TEMPLATE_NAME "SmartAssist"
-#define BLYNK_AUTH_TOKEN "YourAuthToken"
+#define BLYNK_TEMPLATE_ID   "TMPL3Y_NBiYqi"
+#define BLYNK_TEMPLATE_NAME "Smart-Blind-Stick"
+#define BLYNK_AUTH_TOKEN    "IMVRh7MjLEm-eZOU06sox5vjEjl18Zab"
 
 #include <WiFi.h>
 #include <BlynkSimpleEsp32.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
 
-// WIFI
-char ssid[] = "YourWiFiName";
-char pass[] = "YourWiFiPassword";
+// ── Pins ──
+const int trigPin      = 5;
+const int echoPin      = 18;
+const int buzzer       = 2;
+const int sosButton    = 4;
+const int heartRatePin = 32;
+const int ldrPin       = 34;
+const int safetyLED    = 25;
 
-// ==========================
-// FRONT SENSOR (CANE)
-// ==========================
-#define trigFront 5
-#define echoFront 18
+Adafruit_MPU6050 mpu;
+bool mpuFound = false;
+BlynkTimer timer;
 
-// ==========================
-// GROUND SENSOR (DOWNWARD)
-// ==========================
-#define trigGround 17
-#define echoGround 16
+//   SENSOR CHECK — every 2 seconds
 
-// ==========================
-// LEFT WRIST SENSOR
-// ==========================
-#define trigLeft 4
-#define echoLeft 2
+void checkSystem() {
 
-// ==========================
-// RIGHT WRIST SENSOR
-// ==========================
-#define trigRight 15
-#define echoRight 13
+  // Ultrasonic distance
+  digitalWrite(trigPin, LOW);  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH); delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH);
+  int  distance = (duration * 0.034) / 2;
 
-// ==========================
-// VIBRATION MOTORS
-// ==========================
-#define motorLeft 25
-#define motorRight 26
+  int  heartRate  = map(analogRead(heartRatePin), 0, 4095, 60, 160);
+  int  lightLevel = analogRead(ldrPin);
+  bool emergency  = false;
 
-// ==========================
-// BUZZER
-// ==========================
-#define buzzer 27
+  Serial.println("\n===== LIVE MONITORING =====");
 
-// ==========================
-// VARIABLES
-// ==========================
-long duration;
+  // ── Light (LDR) ───────
+  Serial.print("Light Level : "); Serial.println(lightLevel);
+  Blynk.virtualWrite(V5, lightLevel);
+  static bool lightAlertSent = false;
+  if (lightLevel < 800) {
+    digitalWrite(safetyLED, HIGH);
+    Serial.println("Safety LED  : ON");
+    if (!lightAlertSent) {
+      Blynk.logEvent("low_light", "It is getting dark! Safety LED turned ON.");
+      lightAlertSent = true;
+    }
+  } else {
+    digitalWrite(safetyLED, LOW);
+    Serial.println("Safety LED  : OFF");
+    lightAlertSent = false;
+  }
 
-int frontDistance;
-int groundDistance;
-int leftDistance;
-int rightDistance;
+  // ── Obstacle ────
+  Serial.print("Distance    : "); Serial.print(distance); Serial.println(" cm");
+  if (distance > 0 && distance < 50) {
+    emergency = true;
+    Blynk.virtualWrite(V1, "OBSTACLE!");
+    Serial.println("ALERT: OBSTACLE DETECTED!");
+  } else {
+    Blynk.virtualWrite(V1, "Path Clear");
+  }
 
-// ==========================
-// SETUP
-// ==========================
+  // ── Heart Rate ──
+  Serial.print("Heart Rate  : "); Serial.print(heartRate); Serial.println(" BPM");
+  Blynk.virtualWrite(V4, heartRate);
+  if (heartRate > 100) {
+    emergency = true;
+    Serial.println("ALERT: HIGH HEART RATE!");
+    Blynk.logEvent("high_heart_rate", "High heart rate detected!");
+  }
+
+  // ── SOS Button ──
+  if (digitalRead(sosButton) == LOW) {
+    emergency = true;
+    Blynk.virtualWrite(V2, "SOS ACTIVE");
+    Serial.println("ALERT: SOS BUTTON PRESSED!");
+    Blynk.logEvent("sos_alert", "Emergency! SOS button pressed!");
+  } else {
+    Blynk.virtualWrite(V2, "Normal");
+  }
+
+  // ── Fall Detection ──
+  if (mpuFound) {
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    if (abs(a.acceleration.x) > 15 || abs(a.acceleration.y) > 15) {
+      emergency = true;
+      Blynk.virtualWrite(V7, "FALL DETECTED!");
+      Serial.println("ALERT: FALL DETECTED!");
+      Blynk.logEvent("fall_detected", "Fall detected! User may need help.");
+    } else {
+      Blynk.virtualWrite(V7, "Device Stable");
+    }
+  }
+
+ // ── Buzzer ──
+if (emergency) {
+  tone(buzzer, 1000); // play alarm sound
+} else {
+  noTone(buzzer);     // stop sound
+}
+
+}
+
+//   SETUP
 void setup() {
-
   Serial.begin(115200);
+  pinMode(trigPin,   OUTPUT);
+  pinMode(echoPin,   INPUT);
+  pinMode(buzzer,    OUTPUT);
+  pinMode(sosButton, INPUT_PULLUP);
+  pinMode(ldrPin,    INPUT);
+  pinMode(safetyLED, OUTPUT);
 
-  // Blynk
-  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+  Serial.println("\n===== INITIALIZING =====");
 
-  // FRONT SENSOR
-  pinMode(trigFront, OUTPUT);
-  pinMode(echoFront, INPUT);
+  WiFi.begin("Wokwi-GUEST", "");
+  Serial.print("Connecting WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500); Serial.print(".");
+  }
+  Serial.println("\nWiFi Connected!");
 
-  // GROUND SENSOR
-  pinMode(trigGround, OUTPUT);
-  pinMode(echoGround, INPUT);
+  Blynk.config(BLYNK_AUTH_TOKEN);
+  Blynk.connect();
+  Serial.println("Blynk Connected!");
 
-  // LEFT SENSOR
-  pinMode(trigLeft, OUTPUT);
-  pinMode(echoLeft, INPUT);
+  Wire.begin();
+  if (mpu.begin()) {
+    mpuFound = true;
+    Serial.println("MPU6050 Ready!");
+  } else {
+    Serial.println("MPU6050 not found.");
+  }
 
-  // RIGHT SENSOR
-  pinMode(trigRight, OUTPUT);
-  pinMode(echoRight, INPUT);
-
-  // MOTORS
-  pinMode(motorLeft, OUTPUT);
-  pinMode(motorRight, OUTPUT);
-
-  // BUZZER
-  pinMode(buzzer, OUTPUT);
-
-  Serial.println("================================");
-  Serial.println("SMARTASSIST SYSTEM STARTED");
-  Serial.println("================================");
+  Serial.println("SYSTEM READY!\n");
+  timer.setInterval(2000L, checkSystem);
 }
 
-// ==========================
-// DISTANCE FUNCTION
-// ==========================
-int getDistance(int trigPin, int echoPin) {
-
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-
-  digitalWrite(trigPin, LOW);
-
-  duration = pulseIn(echoPin, HIGH);
-
-  int distance = duration * 0.034 / 2;
-
-  return distance;
-}
-
-// ==========================
-// MAIN LOOP
-// ==========================
+//   LOOP
 void loop() {
-
   Blynk.run();
-
-  // READ DISTANCES
-  frontDistance = getDistance(trigFront, echoFront);
-
-  groundDistance = getDistance(trigGround, echoGround);
-
-  leftDistance = getDistance(trigLeft, echoLeft);
-
-  rightDistance = getDistance(trigRight, echoRight);
-
-  // ==========================
-  // SERIAL MONITOR
-  // ==========================
-  Serial.print("Front: ");
-  Serial.print(frontDistance);
-  Serial.println(" cm");
-
-  Serial.print("Ground: ");
-  Serial.print(groundDistance);
-  Serial.println(" cm");
-
-  Serial.print("Left: ");
-  Serial.print(leftDistance);
-  Serial.println(" cm");
-
-  Serial.print("Right: ");
-  Serial.print(rightDistance);
-  Serial.println(" cm");
-
-  Serial.println("---------------------------");
-
-  // ==========================
-  // FRONT OBSTACLE
-  // ==========================
-  if(frontDistance < 80) {
-
-    digitalWrite(buzzer, HIGH);
-
-    Blynk.virtualWrite(V0, "Front Obstacle Detected");
-
-    Serial.println("WARNING: FRONT OBSTACLE");
-
-  } else {
-
-    digitalWrite(buzzer, LOW);
-  }
-
-  // ==========================
-  // GROUND / STAIRS DETECTION
-  // ==========================
-  if(groundDistance > 100) {
-
-    digitalWrite(buzzer, HIGH);
-
-    Blynk.virtualWrite(V1, "Ground Gap / Stairs Detected");
-
-    Serial.println("WARNING: STAIRS OR HOLE");
-
-  }
-
-  // ==========================
-  // LEFT OBSTACLE
-  // ==========================
-  if(leftDistance < 60) {
-
-    digitalWrite(motorLeft, HIGH);
-
-    Blynk.virtualWrite(V2, "Obstacle On Left");
-
-    Serial.println("LEFT OBSTACLE");
-
-  } else {
-
-    digitalWrite(motorLeft, LOW);
-  }
-
-  // ==========================
-  // RIGHT OBSTACLE
-  // ==========================
-  if(rightDistance < 60) {
-
-    digitalWrite(motorRight, HIGH);
-
-    Blynk.virtualWrite(V3, "Obstacle On Right");
-
-    Serial.println("RIGHT OBSTACLE");
-
-  } else {
-
-    digitalWrite(motorRight, LOW);
-  }
-
-  delay(200);
+  timer.run();
 }
